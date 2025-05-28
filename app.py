@@ -293,38 +293,38 @@ def show_detailed_summary(sim, valid_groups, from_stations, duration):
     output.seek(0)
     st.download_button("📥 Download Summary as Excel", data=output, file_name="simulation_results.xlsx")
 
-    import pandas as pd
-from io import BytesIO
+    def show_detailed_summary(sim, valid_groups, from_stations, duration):
+    # ... your existing summary code here ...
 
-# Assuming sim.wip_over_time is a dict of lists: {station_name: [wip_values_over_time]}
-# and sim.time_points is the list of timestamps
+    st.markdown("### 📈 WIP Over Time - Individual Stations")
 
-for station, wip_values in sim.wip_over_time.items():
-    # Prepare figure
-    fig, ax = plt.subplots()
-    ax.plot(sim.time_points, wip_values, marker='o')
-    ax.set_title(f"WIP Over Time - {station}")
-    ax.set_xlabel("Time")
-    ax.set_ylabel("WIP")
-    ax.grid(True)
-    
-    # Display chart
-    st.pyplot(fig)
-    
-    # Save figure to bytes buffer
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png")
-    buf.seek(0)
-    
-    # Provide download button for PNG image
-    st.download_button(
-        label=f"📥 Download {station} WIP Chart as PNG",
-        data=buf,
-        file_name=f"{station}_wip_chart.png",
-        mime="image/png"
-    )
-    
-    plt.close(fig)  # Close fig to free memory
+    import matplotlib.pyplot as plt
+    import io
+
+    # Plot for every station in sim.wip_over_time
+    for station, wip_values in sim.wip_over_time.items():
+        fig, ax = plt.subplots()
+        ax.plot(sim.time_points, wip_values, marker='o')
+        ax.set_title(f"WIP Over Time - {station}")
+        ax.set_xlabel("Time")
+        ax.set_ylabel("WIP")
+        ax.grid(True)
+
+        st.pyplot(fig)
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png")
+        buf.seek(0)
+
+        st.download_button(
+            label=f"📥 Download {station} WIP Chart as PNG",
+            data=buf,
+            file_name=f"{station}_wip_chart.png",
+            mime="image/png"
+        )
+
+        plt.close(fig)
+
 
 
 # ========== Page Navigation ==========
