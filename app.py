@@ -310,3 +310,4 @@ elif st.session_state.page == "open":
     open_simulation()
 elif st.session_state.page == "edit":
     edit_simulation()
+ 
