@@ -293,12 +293,42 @@ def show_detailed_summary(sim, valid_groups, from_stations, duration):
     output.seek(0)
     st.download_button("📥 Download Summary as Excel", data=output, file_name="simulation_results.xlsx")
 
-    # Optional: Show WIP Chart
-    st.markdown("### 📈 WIP Over Time")
-    wip_df = pd.DataFrame(sim.wip_over_time)
-    wip_df["Time"] = sim.time_points
-    wip_df = wip_df.set_index("Time")
-    st.line_chart(wip_df)
+    import pandas as pd
+from io import BytesIO
+
+# Assuming sim.wip_over_time is a dict of lists: {station_name: [wip_values_over_time]}
+# and sim.time_points is the list of timestamps
+
+st.markdown("### 📈 WIP Over Time for Each Station")
+
+# Prepare Excel output for all stations
+output = BytesIO()
+with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+    for station, wip_values in sim.wip_over_time.items():
+        # Create DataFrame with Time and WIP columns for each station
+        df_station = pd.DataFrame({
+            "Time": sim.time_points,
+            "WIP": wip_values
+        })
+        df_station.set_index("Time", inplace=True)
+
+        # Show line chart for this station
+        st.markdown(f"#### Station: {station}")
+        st.line_chart(df_station)
+
+        # Write each station's WIP data to a separate sheet in Excel
+        df_station.to_excel(writer, sheet_name=station[:31])  # Excel sheet name max length 31
+
+output.seek(0)
+
+# Provide download button for the Excel file with all stations
+st.download_button(
+    label="📥 Download WIP Over Time Data for All Stations (Excel)",
+    data=output,
+    file_name="wip_over_time_stations.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
+
 
 # ========== Page Navigation ==========
 if st.session_state.page == "login":
