@@ -293,11 +293,11 @@ def show_detailed_summary(sim, valid_groups, from_stations, duration):
     output.seek(0)
     st.download_button("📥 Download Summary as Excel", data=output, file_name="simulation_results.xlsx")
 
-    import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
 import io
 
 def show_detailed_summary(sim, valid_groups, from_stations, duration):
-    # ... your existing code ...
+    # ... your existing summary code ...
 
     st.markdown("### 📈 WIP Over Time - Individual Stations")
 
@@ -324,7 +324,6 @@ def show_detailed_summary(sim, valid_groups, from_stations, duration):
         )
 
         plt.close(fig)
-)
 
 
 
