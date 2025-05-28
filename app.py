@@ -294,15 +294,15 @@ def show_detailed_summary(sim, valid_groups, from_stations, duration):
     st.download_button("📥 Download Summary as Excel", data=output, file_name="simulation_results.xlsx")
 
     def show_detailed_summary(sim, valid_groups, from_stations, duration):
-    # ... your existing summary code here ...
+      # ... your existing summary code here ...
 
-    st.markdown("### 📈 WIP Over Time - Individual Stations")
+      st.markdown("### 📈 WIP Over Time - Individual Stations")
 
-    import matplotlib.pyplot as plt
-    import io
+     import matplotlib.pyplot as plt
+     import io
 
-    # Plot for every station in sim.wip_over_time
-    for station, wip_values in sim.wip_over_time.items():
+     # Plot for every station in sim.wip_over_time
+     for station, wip_values in sim.wip_over_time.items():
         fig, ax = plt.subplots()
         ax.plot(sim.time_points, wip_values, marker='o')
         ax.set_title(f"WIP Over Time - {station}")
