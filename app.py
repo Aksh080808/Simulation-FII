@@ -106,6 +106,23 @@ def new_simulation():
     if not sim_name:
         sim_name = "simulation_summary"
 
+    # Save simulation data option BEFORE running simulation
+    st.header("Save your simulation setup")
+    save_as = st.text_input("Filename to save current inputs", value=sim_name, key="save_filename")
+    if st.button("💾 Save Current Setup"):
+        # Save all needed data to JSON file
+        data_to_save = {
+            "station_groups": [{"group_name": g, "equipment": valid_groups[g]} for g in valid_groups],
+            "connections": [(src, dst) for src, tos in st.session_state.connections.items() for dst in tos],
+            "from_stations": st.session_state.from_stations,
+            "duration": duration,
+            "simulation_name": save_as,
+            "valid_groups": valid_groups,  # Save also the eq dict
+        }
+        with open(os.path.join(SAVE_DIR, f"{save_as}.json"), "w") as f:
+            json.dump(data_to_save, f, indent=2)
+        st.success(f"Saved simulation as {save_as}.json")
+
     # Run Simulation button
     if st.button("▶️ Run Simulation"):
         # Prepare station_groups_data from valid_groups dict
@@ -123,22 +140,6 @@ def new_simulation():
         # Show summary table with WIP and utilization
         show_detailed_summary(run_result, valid_groups, st.session_state.from_stations, duration)
 
-        # Save simulation data option
-        with st.expander("📁 Save Simulation"):
-            save_as = st.text_input("Filename", value=sim_name, key="save_filename")
-            if st.button("💾 Save Simulation"):
-                # Save all needed data to JSON file
-                data_to_save = {
-                    "station_groups": station_groups_data,
-                    "connections": [(src, dst) for src, tos in st.session_state.connections.items() for dst in tos],
-                    "from_stations": st.session_state.from_stations,
-                    "duration": duration,
-                    "simulation_name": save_as,
-                    "valid_groups": valid_groups,  # Save also the eq dict
-                }
-                with open(os.path.join(SAVE_DIR, f"{save_as}.json"), "w") as f:
-                    json.dump(data_to_save, f, indent=2)
-                st.success(f"Saved simulation as {save_as}.json")
 
 def open_simulation():
     st.title("📂 Open Simulation")
@@ -192,7 +193,7 @@ def edit_simulation():
 def run_simulation_backend(station_groups_data, connections_list, from_stations_dict, duration):
     env = simpy.Environment()
     sim = FactorySim(env, station_groups_data, connections_list, from_stations_dict, duration)
-    env.process(sim.run())
+    env.process(sim.run())  # run() must be a generator
     env.run(until=duration)
     return sim
 
@@ -200,108 +201,128 @@ class FactorySim:
     def __init__(self, env, station_groups_data, connections, from_stations, duration):
         self.env = env
         self.duration = duration
+
+        # Store topology
+        self.station_groups = {}
         self.connections = defaultdict(list)
+        self.from_stations = from_stations  # dict[group_name] = list of from groups (or empty)
+
+        # Create SimPy resources per equipment
+        for group in station_groups_data:
+            group_name = group["group_name"]
+            equipment = group["equipment"]
+            self.station_groups[group_name] = {
+                "resources": {},
+                "cycle_times": {},
+                "throughput": 0,
+                "completed": 0,
+                "queue_times": [],
+                "active_count": 0,
+            }
+            for eq_name, cycle_time in equipment.items():
+                res = simpy.Resource(env, capacity=1)
+                self.station_groups[group_name]["resources"][eq_name] = res
+                self.station_groups[group_name]["cycle_times"][eq_name] = cycle_time
+
+        # Build connection map: from -> [to]
         for src, dst in connections:
             self.connections[src].append(dst)
-        self.from_stations = from_stations
-        self.buffers = defaultdict(lambda: simpy.Store(env))
-        self.resources = {}
-        self.cycle_times = {}
-        self.throughput_in = defaultdict(int)
-        self.throughput_out = defaultdict(int)
-        self.equipment_busy_time = defaultdict(float)
-        self.group_eq_map = defaultdict(list)
-        self.board_id = 0
 
-        # Create resources and map eq to group
-        for group in station_groups_data:
-            g_name = group["group_name"]
-            for eq_name, ct in group["equipment"].items():
-                self.resources[eq_name] = simpy.Resource(env, capacity=1)
-                self.cycle_times[eq_name] = ct
-                self.group_eq_map[g_name].append(eq_name)
+        # Data tracking
+        self.throughput_per_group = defaultdict(int)
+        self.start_time = env.now
 
     def run(self):
-        # Start feeder processes for start groups
-        start_groups = [g for g in self.group_eq_map if g not in self.from_stations or not self.from_stations[g]]
-        for g in start_groups:
-            self.env.process(self.feeder(g))
+        # Start feeders at groups with no from_stations (start of line)
+        for group_name in self.station_groups:
+            if not self.from_stations.get(group_name):
+                self.env.process(self.feeder(group_name))
 
-        # Start workers for all equipment
-        for eq in self.resources:
-            self.env.process(self.worker(eq))
+        # Start workers for all equipment in all groups
+        for group_name, group in self.station_groups.items():
+            for eq_name in group["resources"]:
+                self.env.process(self.worker(group_name, eq_name))
 
-    def feeder(self, group):
+        # Run simulation until duration
         while self.env.now < self.duration:
-            board = f"B{self.board_id}"
-            self.board_id += 1
-            yield self.buffers[group].put(board)
-            yield self.env.timeout(1)  # Feed one board per second (adjust if needed)
+            yield self.env.timeout(1)
 
-    def worker(self, eq):
-        group = next(g for g, eqs in self.group_eq_map.items() if eq in eqs)
+    def feeder(self, group_name):
+        """Continuously feed boards into a station group."""
+        group = self.station_groups[group_name]
         while True:
-            board = yield self.buffers[group].get()
-            self.throughput_in[eq] += 1
-            with self.resources[eq].request() as req:
-                start_busy = self.env.now
+            # Feed boards at intervals determined by the min cycle time of this group (rough guess)
+            min_ct = min(group["cycle_times"].values())
+            yield self.env.timeout(min_ct)
+
+            # Immediately start processing on the first equipment in the group
+            for eq_name, resource in group["resources"].items():
+                # Try request resource if free
+                if resource.count < resource.capacity:
+                    # Start processing a board
+                    self.env.process(self.process_board(group_name, eq_name))
+                    break
+
+    def worker(self, group_name, eq_name):
+        """Worker process that continuously tries to process boards."""
+        group = self.station_groups[group_name]
+        resource = group["resources"][eq_name]
+        cycle_time = group["cycle_times"][eq_name]
+
+        while True:
+            with resource.request() as req:
                 yield req
-                yield self.env.timeout(self.cycle_times[eq])
-                end_busy = self.env.now
-                self.equipment_busy_time[eq] += (end_busy - start_busy)
-            self.throughput_out[eq] += 1
-            for next_group in self.connections.get(group, []):
-                yield self.buffers[next_group].put(board)
+                # Process one board for cycle_time
+                yield self.env.timeout(cycle_time)
+                # Increment throughput count
+                group["completed"] += 1
+                self.throughput_per_group[group_name] += 1
 
-def show_detailed_summary(sim, valid_groups, from_stations, sim_time):
-    st.markdown("---")
-    st.subheader("📊 Simulation Results Summary")
+    def process_board(self, group_name, eq_name):
+        """Process a board through one equipment and pass it downstream."""
+        group = self.station_groups[group_name]
+        resource = group["resources"][eq_name]
+        cycle_time = group["cycle_times"][eq_name]
 
-    groups = list(valid_groups.keys())
-    agg = defaultdict(lambda: {'in': 0, 'out': 0, 'busy': 0, 'count': 0, 'cycle_times': [], 'wip': 0})
+        with resource.request() as req:
+            yield req
+            yield self.env.timeout(cycle_time)
+            group["completed"] += 1
+            self.throughput_per_group[group_name] += 1
 
-    for group in groups:
-        eqs = valid_groups[group]
-        for eq in eqs:
-            agg[group]['in'] += sim.throughput_in.get(eq, 0)
-            agg[group]['out'] += sim.throughput_out.get(eq, 0)
-            agg[group]['busy'] += sim.equipment_busy_time.get(eq, 0)
-            agg[group]['cycle_times'].append(sim.cycle_times.get(eq, 0))
-            agg[group]['count'] += 1
+            # Pass board downstream
+            downstream = self.connections.get(group_name, [])
+            for next_group in downstream:
+                # Feed next group
+                self.env.process(self.process_board(next_group, next(iter(self.station_groups[next_group]["resources"]))))
 
-        prev_out = sum(
-            sim.throughput_out.get(eq, 0)
-            for g in from_stations.get(group, [])
-            for eq in valid_groups.get(g, {})
-        )
-        curr_in = agg[group]['in']
-        agg[group]['wip'] = max(0, prev_out - curr_in)
+# ========== Result Display ==========
 
-    # Prepare DataFrame
-    df = pd.DataFrame([{
-        "Station Group": g,
-        "Boards In": agg[g]['in'],
-        "Boards Out": agg[g]['out'],
-        "WIP": agg[g]['wip'],
-        "Number of Equipment": agg[g]['count'],
-        "Cycle Times (sec)": ", ".join(str(round(ct, 1)) for ct in agg[g]['cycle_times']),
-        "Utilization (%)": round((agg[g]['busy'] / (sim_time * agg[g]['count'])) * 100, 1) if agg[g]['count'] > 0 else 0
-    } for g in groups])
+def show_detailed_summary(sim, valid_groups, from_stations, duration):
+    st.header("📈 Simulation Summary")
 
-    st.dataframe(df, use_container_width=True)
+    data = []
+    for group_name, group_data in sim.station_groups.items():
+        completed = group_data["completed"]
+        eq_cycle_times = valid_groups[group_name].values()
+        avg_cycle = sum(eq_cycle_times) / len(eq_cycle_times)
+        utilization = (completed * avg_cycle) / duration if duration > 0 else 0
+        from_list = from_stations.get(group_name, [])
+        data.append({
+            "Station Group": group_name,
+            "Throughput (completed units)": completed,
+            "Avg Cycle Time (sec)": round(avg_cycle, 2),
+            "Utilization (%)": round(utilization * 100, 2),
+            "From Stations": ", ".join(from_list) if from_list else "START"
+        })
+    df = pd.DataFrame(data)
+    st.dataframe(df)
 
-    # Excel download
-    towrite = BytesIO()
-    df.to_excel(towrite, index=False, sheet_name="Summary")
-    towrite.seek(0)
-    st.download_button(
-        "📥 Download Summary Excel",
-        data=towrite,
-        file_name="simulation_summary.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+    # Download button
+    csv_data = df.to_csv(index=False).encode("utf-8")
+    st.download_button("Download Summary CSV", csv_data, "simulation_summary.csv", "text/csv")
 
-# ========== Main Control ==========
+# ========== Main App Logic ==========
 
 def main():
     if not st.session_state.authenticated:
@@ -315,6 +336,9 @@ def main():
             open_simulation()
         elif st.session_state.page == "edit":
             edit_simulation()
+        else:
+            st.session_state.page = "main"
+            main_page()
 
 if __name__ == "__main__":
     main()
