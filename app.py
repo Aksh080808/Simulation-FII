@@ -243,7 +243,7 @@ class FactorySimulation:
             yield self.env.timeout(1)
 
     def run(self):
-    for group in self.station_groups:
+     for group in self.station_groups:
         for eq in self.station_groups[group]:
             self.env.process(self.equipment_worker(eq))
     self.env.process(self.feeder())
