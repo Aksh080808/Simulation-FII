@@ -3,3 +3,4 @@ pandas>=2.2.0
 simpy>=4.0.1
 python-dotenv>=1.0.1
 XlsxWriter>=3.0.0
+matplotlib>=3.5.0
