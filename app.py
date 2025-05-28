@@ -299,35 +299,32 @@ from io import BytesIO
 # Assuming sim.wip_over_time is a dict of lists: {station_name: [wip_values_over_time]}
 # and sim.time_points is the list of timestamps
 
-st.markdown("### 📈 WIP Over Time for Each Station")
-
-# Prepare Excel output for all stations
-output = BytesIO()
-with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-    for station, wip_values in sim.wip_over_time.items():
-        # Create DataFrame with Time and WIP columns for each station
-        df_station = pd.DataFrame({
-            "Time": sim.time_points,
-            "WIP": wip_values
-        })
-        df_station.set_index("Time", inplace=True)
-
-        # Show line chart for this station
-        st.markdown(f"#### Station: {station}")
-        st.line_chart(df_station)
-
-        # Write each station's WIP data to a separate sheet in Excel
-        df_station.to_excel(writer, sheet_name=station[:31])  # Excel sheet name max length 31
-
-output.seek(0)
-
-# Provide download button for the Excel file with all stations
-st.download_button(
-    label="📥 Download WIP Over Time Data for All Stations (Excel)",
-    data=output,
-    file_name="wip_over_time_stations.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-)
+for station, wip_values in sim.wip_over_time.items():
+    # Prepare figure
+    fig, ax = plt.subplots()
+    ax.plot(sim.time_points, wip_values, marker='o')
+    ax.set_title(f"WIP Over Time - {station}")
+    ax.set_xlabel("Time")
+    ax.set_ylabel("WIP")
+    ax.grid(True)
+    
+    # Display chart
+    st.pyplot(fig)
+    
+    # Save figure to bytes buffer
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png")
+    buf.seek(0)
+    
+    # Provide download button for PNG image
+    st.download_button(
+        label=f"📥 Download {station} WIP Chart as PNG",
+        data=buf,
+        file_name=f"{station}_wip_chart.png",
+        mime="image/png"
+    )
+    
+    plt.close(fig)  # Close fig to free memory
 
 
 # ========== Page Navigation ==========
