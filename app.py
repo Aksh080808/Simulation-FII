@@ -246,8 +246,8 @@ class FactorySimulation:
      for group in self.station_groups:
         for eq in self.station_groups[group]:
             self.env.process(self.equipment_worker(eq))
-    self.env.process(self.feeder())
-    yield self.env.timeout(0)  # ✅ makes this a generator
+        self.env.process(self.feeder())
+        yield self.env.timeout(0)  # ✅ makes this a generator
 
 
 
